@@ -1,0 +1,169 @@
+
+RISC V Notes:
+
+Traps:
+
+A trap can either be an interrupt or an exception. An interrupt is driven by the hardware when an event (input from keyboard or mourse, network packet arrival, disk IO completion, etc...) occurs that needs the processor's attention. An exception can be further classified as a system call or an instruction error. A system call occurs when a user process requires a service from the operating system so it issues a system call as a part of its instructions. An instruction error occurs when an instruction is invalid (does not match any ISA instruction), or misaligned (e.g. does not begin at a 4-byte boundary) or causes a problematic result (division by zero). 
+In all cases (hardware interrupt, system call or instruction error), a trap is generated and trap handling takes place. Trap handling process is performed partially by the hardware and partially by the operating system. 
+
+There is a register, per hart, called mstatus, that holds numerous status and control bits that control the operation of the hart. There is also another register, sstatus, which serves the same purpose. When running in machine mode, the hart is controlled by the bit values in mstatus while when running in supervisor mode, the hart is controlled by the bit values in sstatus. For the most part, the two registers are implemented as one register with the machine mode being able to access bits that are not accessible in sstatus. In other implementations, sstatus can be a hardwired copy of mstatus with some bits disabled (those that can only by accessed in machine mode). In machine mode, both mstatus and sstatus are accessible. 
+
+When operating in machine mode, a trap can be simulated, that is, the system can be made to believe that a trap has occurred when nothing actually has occurred. This happens by setting a bit (or more) in sip register and returning from machine mode to supervisor mode while enabling trap handling in supervisor mode. More details on this are provided below. 
+
+Trap handling in RISCV
+
+RISCV allows traps to be handled horizontally or vertically. A horizontal trap handle is when the trap is handled at the same privilege level at which the trap occurs and vertical trap handling is when the trap is handled at a level higher than that at which the trap occurs. Each privilege level x has a bit in the mstatus register, called xIE for interrupt enable, that indicates whether an interrupt (not an exception) should be handled horizontally or vertically. If xIE is set, the interrupt is handled horizontally, otherwise, it is handled at the next higher privilege level y regardless of whether yIE is set or not. Ignoring yIE in this case is required because the interrupt has to be handled somewhere. Since most user mode interrupt should be handled at a higher level (otherwise, they should not be traps at all), the mstatus.UIE bit is always 0. Exceptions, on the other hand, are always handled at the machine mode regardless of whether xIE is set or not. It is desirable however to let some, or all, of the exception be handled in supervisor mode. There are two ways to do this, either to simulate a supervisor trap or to delegate trap handling. Both will be explained below. 
+
+While handling a trap at any level, it is possible that the trap handler chooses not to handle any other interrupe. In this case, and because the hart is running at level x, mstatus.xIE should be reset. Because this is a common scenario, the hardware resets mstatus.xIE before entering the trap handler. The trap handler can choose to set mstatus.xIE back if it is ready to handle other interrupts occurring while handling the original trap. 
+
+The previous mechanism causes a problem, upon returning from handling the trap, mstatus.xIE bit should be set to its original value before the hardware reset it. Thus, before entering the trap, mstatus.xIE bit is copied to mstatus.xPIE bit (previous interrupt enable) and upon returning from the trap, using the xRET instruction, mstatus.xPIE is copied back to mstatus.xIE and mstatus.xPIE is set to 1. 
+
+A similar problem occurs when handling traps vertically. The hardware automatically changes the privilege level to the next one up for vertical traps, upon returning from a trap, the privilege level needs to be set back to what it used to be. The privilege level before trapping is written to mstatus.xPP bit (previous privilege level) and upon calling xRET, the value in mstatus.xPP is used to set the privilege level after return. After returning from trap, mstatus.xPP is set to the lowest privilege level available (00 for user mode). mstatus bits xPIE and xPP provide a stack-like structure where previous state can be pushed before handling the trap and popped after. 
+
+If a trap occurs at level x, a bit in the xip (mip/sip) register is set to indicate that this trap is pending. The trap of the highest priority is handled first followed by the second highest priority trap and so on. Each bit in xip corresponds to one type of traps. The bits of xip match those of xcause (mcause/scause).
+
+A trap occuring in user or supervisor mode and that is supposed to be handled in machine mode can be redirected to supervisor mode. There are two machine mode registers, medeleg and mideleg that are checked before handling a trap in machine mode. If the bit corresponding to the trap (the same bit in mcause register) is set, the trap is handled in supervisor mode. The medeleg is for exceptions and mideleg is for interrupts. 
+
+Keep in mind that delegation cannot result in a trap being handled at a lower privilege level. Traps occuring in machine mode are handled in machine mode regardless of the contents of medeleg and mideleg. When a trap occurs in supervisor mode AND it is to be handled in machine mode AND its corresponding bit in medeleg/mideleg is set, it gets handled in supervisor mode (horizontal trap handling). There are no supervisor mode sedeleg or sideleg registers. This behavior is different from that of exceptions where even if they are delegated, they are never handled at a lower priviliege level. If an exception cannot be handled in a lower privilege level, its corresponding medeleg bit should be reset so that it gets handled in machine mode. 
+
+However, if an interrupt (not an exception) is delegated by the machine (by setting a bit in mideleg), this interrupt becomes masked when running in machine mode (that is, if it occurs while in machine mode, it gets ignored) and becomes unmasked when running in supervisor mode (if it occurs while in supervisor mode, it gets handled there).
+
+Accordingly, when operating in machine mode, the following steps take place when a trap occurs:
+	mstatus.mie = 0 AND trap is an interrupt --> skip its handling
+	mstatus.mie = 1 -->
+		set mstatus.mpie = mstatus.mie
+		set mstatus.mie = 0
+		set mstatus.mpp = 11 (machine privilege level)
+		handle trap in machine mode
+		call mret which restores:
+			mstatus.mie = mstatus.mpie
+			privilege level = mstatus.mpp
+			mstatus.mpie = 1
+			if mstatus.mpp != m, set mstatus.mprv = 0
+			mstatus.mpp = 00
+
+And when operating in supervisor mode, the following steps take place when a trap occurs:
+	sstatus.sie = 0 AND trap is an interrupt AND trap's mideleg bit is NOT set --> handle in machine mode:
+		set mstatus.mpie = mstatus.mie
+		set mstatus.mie = 0
+		set mstatus.mpp = 01 (supervisor privilege level)
+		handle trap in machine mode
+		call mret which restores:
+			mstatus.mie = mstatus.mpie
+			privilege level = mstatus.mpp
+			mstatus.mpie = 1
+			if mstatus.mpp != m, set mstatus.mprv = 0
+			mstatus.mpp = 00
+	sstatus.sie = 1, or it is an exception, or it is an interrupt with its mideleg bit set --> handle trap in supervisor mode:
+		set sstatus.spie = mstatus.sie
+		set sstatus.sie = 0
+		set sstatus.spp = 01 (supervisor privilege level)
+		handle trap in supervisor mode
+		call sret which restores:
+			sstatus.sie = sstatus.spie
+			privilege level = sstatus.spp
+			sstatus.spie = 1
+			sstatus.spp = 00
+Which means that when running in supervisor mode, all exceptions and delegated interrupts are handled horizontally (in supervisor mode).
+
+If operating in user mode
+mstatus.uie = 0, handle trap in supervisor mode (this is always the case)
+	set mstatus.spie = mstatus.sie 
+	set mstatus.sie = 0 
+	set mstatus.spp = 0 (user privilege level)
+	handle interrupt in supervisor mode
+	call sret which restores:
+		mstatus.sie = mstatus.spie
+		privilege level = mstatus.spp
+		mstatus.spie = 1 (interrupts were enabled)
+		mstatus.spp = 00 (least supported privilege)
+mstatus.uie = 1, handle interrupt in user mode
+or if supervisor mode doesn't exist, handle interrupt in machine mode. mstatus.uie is never equal to 1 and mstatus is not accessible in user mode
+
+Which means that when running in user mode, all exceptions and interrupts are handled vertically. 
+
+mie/sie bits are only used to make a decision when the interrupt occurs in the current privilege mode, not at a different mode. These disable interrupts globally. The mie/sie registers provide finer control on which interrupts/exceptions to enable or disable at each level. 
+
+In the above, when it says "handle trap in x mode", the following happens:
+1. Copy program counter to xepc (mepc/sepc) register
+2. Write trap cause to xcause (mcause/scause) register
+3. Write extra trap information to xtval (mtval/stval) register
+4. Write trap cause to xcause (mcause/scause) register
+	If the trap cause is an ecall (environment call), the appropriate xcause code (8, 9 or 11) is written to indicate that. 
+5. Read xie (mie/sie) register, if the xie bit corresponding to the set xcause bit is 0, skip the rest of the operation
+6. Switch to x (M/S) mode
+7. Read xtvec (mtvec/stvec) and calculate the location of the trap vector, for this, define mtvec.base = top MXLEN - 2 bits of xtvec and xtvec.mode = least 2 bits of xtvec
+	3.1 xtvec.mode = 00, the trap vector location  = xtvec.base
+	3.2 xtvec.mode = 01, the trap vector location  = xtvec.base + 4 * xcause
+8. Copy the location of the trap table to pc
+9. Start execution at the new pc until xret is encountered
+
+All traps have to start at the location calculated from xtvec to provide protection. The OS sets xtvec at start up and it controls what happens there. If a user process can use the hardware to increase its running privilege level while still running user process instructions, the process can take over the system. 
+
+To summarize trap handling rules:
+Traps are handled in machine mode if (A OR B) AND C AND D AND E
+	A. Hart is running in machine mode and mstatus.mie is set
+	B. Hart is running in a lower privilege level x, regardless of whether xstatus.xie is set and regardless of xie.trap_bit value
+	C. mie.trap_bit is set
+	D. mip.trap_bit is set
+	E. mideleg.trap_bit is reset
+
+Traps are handled in supervisor mode if (A OR B) AND C AND D
+	A. Hart is running in supervisor mode and sstatus.sie is set
+	B. Hart is running in a lower privilege level x, regardless of whether xstatus.xie is set and regardless of xie.trap_bit value
+	C. sie.trap_bit is set
+	D. sip.trap_bit is set
+
+Upon any change in xip and upon return (xret), the conditions for trap handling need to be evaluated.
+	A change in xip --> a trap became pending
+	xret --> a trap might have been simulated before xret and is now pending
+
+==============================================================
+Control and Status Registers (CSRs):
+
+xtval (mtval/stval): When a trap occurs while running in machine mode, this register is optionally written by a trap-specific number to indicate to trap handlers what kind of trap occurs. It carries extra information about the trap that can be used by the handler. Implementations can choose not to write anything in this register, in which case it is always zero, or write trap information only for certain traps, in which case it is zero unless one of the informative traps occurs. 
+
+xepc (mepc/sepc): holds the program counter of the instruction at which the trap occured, its LSB is always 0 because instructions have to be aligned to two-byte boundaries (sometimes 4-byte boundaries if IALIGN=32)
+
+xcause (mcause/scause): holds a code that indicates the event that caused the trap, its MSB = 1 when the trap is an interrupt and it is 0 if it is an exception. When multiple interrupts occur at the same time, the code for the highest priority interrupt is written to mcause. Interrupts priorities are defined as a part of the RISCV specification. 
+
+xtvec (mtvec/stvec): holds the address of the trap vector (trap handling table) and the trap handling mode (direct = 0, vector = 1).
+
+xstatus (mstatus/sstatus): stores the status of the hart along with multiple bits used to control the hart's operation
+
+medeleg: stores the bits corresponding to exceptions that have been delegated by the machine mode to be handled in supervisor mode when they occur in supervisor mode. If they occur in machine mode they are handled in machine mode regardless of whether their bits in medeleg are set or reset. 
+
+mideleg: stores the bits corresponding to interrupts that have been delegated by the machine mode to be handled in supervisor mode when they occur in supervisor mode. If they occur in machine mode and they are not delegated (bit set to zero), the interrupt is masked and never handled. 
+
+xie (mie/sie): stores the bits corresponding to traps that have been individually disabled or enabled. If a bit is zero, its trap is disabled at the running privilege level and either not handled (if it occurs in machine mode) or handled at a higher privilege level (if it occurs in supervisor mode). The bits in xie correspond to those in xcause. 
+	xie.xEIE: external interrupts enable bit
+	xie.xTIE: timer interrupt enable bit
+	xie.xSIE: software interrupt enable bit (exception bit)
+If an interrupt is delegated to supervisor mode, then the sie bits control whether this interrupt gets handled at supervisor mode or masked (ignored). If they are not delegated, then the interrupt is handled in machine mode regardless of anything else. In this case, the bits of sie are irrelevant. 
+
+xip (mip/sip): stores the bits corresponding to pending traps that have occured but haven't been handled yet. When a trap occurs, its corresponding bit in xip is set. This is one way to simulate traps that did not occur while running in machine mode. The hart can set one of the sip bits, enable trap handling in sip (sstatus.sip = 1) then mret to supervisor mode. Before calling xret (mret/sret), after handling a trap the corresponding xip bit needs to be cleared.
+	xip.xEIP: external interrupts pending bit
+	xip.xTIP: timer interrupt pending bit
+	xip.xSIP: software interrupt pending bit (exception bit)
+If an interrupt is delegated to supervisor mode, then the sip bits are set whenever it occurs. If they are not delegated, then the interrupt is handled in machine mode, the mip bits are set when it occurs and the bits of sip are irrelevant. 
+
+xscratch (mscratch/sscratch): scratch space used usually during trap handling. 
+
+xtval (mtval/stval): optionally holds extra information about traps. Hardware implementation determines which traps write extra information to xtval and what is the format of the extra information in the register. 
+
+mcycle: stores the number of cycles executed by the hart
+minstret: stores the number of instructions retired by the hart
+mhpmcounter3 --> mhpmcounter31: 29 registers storing the counts of various events that can be set by writing to mhpmevent3 --> mhpmevent31
+
+mhpmevent3 --> mhpmevent31: store the types of events that are tracked by the hardware performance monitor in registers mhpmcounter3 --> mhpmcounter31. Event 0 is no event. 
+
+xcounteren (mcounteren/scounteren): bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are accessible from lower level privilege modes and which counters are not. If a bit is set, its counter can be read at the privilege level below the machine mode, otherwise, reading this at a lower privilege level raises an illegal instruction exception. 
+
+mcounteren: bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are inhibited from incrementing and which counters are not. If a bit is set, its counter is inhibited and does not increment, otherwise, the counter increments normally.  
+
+mtime: holds the current time in clock ticks. The value in the register is increment every clock tick. It is a 64-bit register and once the value held reaches the maximum possible value, the next tick satregister contents are reset to zero and counting starts again. The value in mtime is treated as an unsigned integer.
+
+mtimecmp: holds a time value, in number of clock ticks, to compare against. The system will provide a timer interrupt every time the time in mtime becomes higher than that in mtimecmp. The interrupt remains active until mtimecmp becomes higher than mtime. Incrementing mtimecmp with the value of the time slice every time the hart gets a timer interrupt allows the hart to get interrupted every time slice. Timer interrupts are taken if mie.MTIE is set. 
+
+satp: holds the location of the root of the page table in its 
+lower 44 bits and the paging mode in the upper 4 bits. For Sv39, the mode is 8 (1000 in bits 63-60)
