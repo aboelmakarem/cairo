@@ -176,5 +176,4 @@ as instructions accessing both IO and memory (when the bit is one).
 
 mseccfg: controls some of the hart's security features. 
 
-satp: holds the location of the root of the page table in its 
-lower 44 bits and the paging mode in the upper 4 bits. For Sv39, the mode is 8 (1000 in bits 63-60)
+satp: holds the location of the root of the page table in its lower 44 bits and the paging mode in the upper 4 bits. For Sv39, the mode is 8 (1000 in bits 63-60) while for bare mode (direct mapping to physical memory, or no memory management), the mode is 0.
