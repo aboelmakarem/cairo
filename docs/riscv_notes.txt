@@ -159,11 +159,22 @@ mhpmevent3 --> mhpmevent31: store the types of events that are tracked by the ha
 
 xcounteren (mcounteren/scounteren): bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are accessible from lower level privilege modes and which counters are not. If a bit is set, its counter can be read at the privilege level below the machine mode, otherwise, reading this at a lower privilege level raises an illegal instruction exception. 
 
-mcounteren: bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are inhibited from incrementing and which counters are not. If a bit is set, its counter is inhibited and does not increment, otherwise, the counter increments normally.  
+mcounterinhibit: bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are inhibited from incrementing and which counters are not. If a bit is set, its counter is inhibited and does not increment, otherwise, the counter increments normally.  
 
 mtime: holds the current time in clock ticks. The value in the register is increment every clock tick. It is a 64-bit register and once the value held reaches the maximum possible value, the next tick satregister contents are reset to zero and counting starts again. The value in mtime is treated as an unsigned integer.
 
 mtimecmp: holds a time value, in number of clock ticks, to compare against. The system will provide a timer interrupt every time the time in mtime becomes higher than that in mtimecmp. The interrupt remains active until mtimecmp becomes higher than mtime. Incrementing mtimecmp with the value of the time slice every time the hart gets a timer interrupt allows the hart to get interrupted every time slice. Timer interrupts are taken if mie.MTIE is set. 
+
+mconfigptr: a read-only register that holds the physical address of a configuration data structure. The 
+contents of the configuration data structure have not been standardized yet and may be different for 
+different vendors. 
+
+xenvcfg: controls the execution environments for modes less privileged than x(x = M or S). Among other 
+things, the least significant bit of this register controls whether FENCE instructions executed in lower 
+modes and requesting IO access can be ordered as instructions accessing IO only (when the bit is zero) or 
+as instructions accessing both IO and memory (when the bit is one). 
+
+mseccfg: controls some of the hart's security features. 
 
 satp: holds the location of the root of the page table in its 
 lower 44 bits and the paging mode in the upper 4 bits. For Sv39, the mode is 8 (1000 in bits 63-60)
