@@ -48,24 +48,56 @@ entry:
 	csrw medeleg,t1
 	# 9. Set the machine mode trap vector location and use the 
 	# same location for supervisor mode trap vector
-	la t2,trap_location
+	la t2,trap_vector
 	csrw mtvec,t2
 	csrw stvec,t2
-	# 10. Set machine and supervisor mode return addresses to zero for now
-	# this will be updated below for hart 0
+	# 10. Zero machine mode return address
 	csrw mepc,zero
 	csrw sepc,zero
+	# 11. Set supervisor mode status to user-level and no interrupt 
+	# handling for now
+	csrw sstatus,zero
+	# 12. Enable all traps in mie (timer, software and external)
+	# for machine mode, this requires setting bits 3, 7 and 11
+	# in mie register
+	li t2,0x888
+	csrw mie,t2
+	# 13. Do the same for sie, but this requires setting bits 
+	# 1, 5 and 9 instead. 
+	li t2,0x0222
+	csrw sie,t2
+	# 14. Set machine mode status
+	# bits 11 and 12: machine privilege level
+	# bit 7: machine mode past interrupt enabled
+	# bit 3: machine mode current interrupt enabled
+	li t2,0x1888
+	csrw mstatus,t2
+	# 15. Allow supervisor mode to have full access to 
+	# all memory. Set the physical memory protection (PMP) 
+	# configuration register pmpcfg0 to give the first 
+	# PMP range full access and set the first PMP range 
+	# address register pmpaddr0 to point to the top of the 
+	# accessible memory and have a memory size that is 
+	# equal to all the accessible memory. 
+	# The PMP configuration is 8 bits and a configutation 
+	# of 0x0f allows read, write and execute access to 
+	# a memory range that starts at memory 0 and ends at 
+	# the memory address specified in PMP address register 
+	# 0. 
+	csrw pmpcfg0,0x0f
+	# The top of the address range for PMP first range should 
+	# be all the memory accessible to the hart. This is 
+	# a 56-bit memory range that runs from 0 - 2**56. 
+	# The value in pmpaddr0 should then be 2**56 - 1
+	li t3,0xffffffffffffff
+	csrw pmpaddr0,t3
 
-	# Hart 0 will be designated to take all external 
-	# interrupts in addition to its timer and software 
-	# interrupts while other harts will handle their software 
-	# and timer interrupts. This will be set on a per-hart 
-	# basis below.
+	# Store the hart ID in tp
+	csrr tp,mhartid
+	# If this is not core 0, skip the section below and 
+	# go to set the hart stack
+	bnez tp,set_hart_stack
 
-	# Store the hart ID in t0
-	csrr t0,mhartid
-	# If this is not core 0, sleep
-	bnez t0,non_zero_sleep
 	# The following runs on hart 0 only
 	# push the current options stack
 	.option push
@@ -81,12 +113,13 @@ entry:
 	la gp,global_pointer
 	# pop back the options stack (get rid of last option)
 	.option pop
+
 	# Zero-out all BSS section. The symbols bss_start and 
 	# bss_end are defined in the linker script and they 
 	# point to the beginning and end of bss section
 	la a0,bss_start
 	la a1,bss_end
-	bgeu a0,a1,configure_hart
+	bgeu a0,a1,set_hart_stack
 
 	# loop over all bytes in BSS and set them to zero
 bss_clear_loop:
@@ -98,50 +131,37 @@ bss_clear_loop:
 	# iterate
 	bltu a0,a1,bss_clear_loop
 
-configure_hart:
-	# Initialize all control registers
-	# Set stack pointer
-	la sp,kernel_stack_end
-	# Set machine mode status
-	# bits 11 and 12: machine privilege level
-	# bit 7: machine mode past interrupt enabled
-	# bit 3: machine mode current interrupt enabled
-	li t2,0x1888
-	csrw mstatus,t2
-	# Set supervisor mode status to user-level and no interrupt 
-	# handling for now
-	csrw sstatus,zero
-	# Overwrite the address in mepc by the address of the 
-	# kernel entry point and use mret to return to it
-	la t0,kernel_main
-	csrw mepc,t0
-	# Enable all traps in mie (timer, software and external)
-	# for machine mode, this requires setting bits 3, 7 and 11
-	# in mie register
-	li t2,0x0888
-	csrw mie,t2
-	csrw sie,t2
-	# Upon executing mret below, the control will go to the 
-	# kernel and will never come back. Set the return address 
-	# to the sleep section below to have something to return 
-	# to but it will never be used. 
-	la ra,non_zero_sleep
-	mret
+set_hart_stack:
+	# Set kernel stack pointer, each hart gets its own 
+	# stack space equal to one page in memory. The linker 
+	# defines where the kernel stack end is and it is 
+	# designed to support up to 128 harts. All harts above 
+	# 128, if they exist, will be put to permanent sleep 
+	# and never used. 
+	# Register tp holds the hart ID
+	li t1,128
+	bgeu tp,t1,upper_hart_sleep
+	# load the kernel stack space start to sp
+	la sp,kernel_stack_start
+	# kernel stack size
+	li a0,4096
+	# 1-based hart id
+	addi a1,tp,1
+	# hart's kernel stack end offset
+	mul a0,a0,a1
+	# set hart stack end
+	add sp,sp,a0
+	
+enter_kernel_main:
+	# call the kernel main function, this call never returns
+	call kernel_main
 
-non_zero_sleep:
-	# Set machine mode status to user privilege level and disable all 
-	# previous and current interrupt handling for non-zero harts. Apply 
-	# the same settings to supervisor mode. 
-	csrw mstatus,zero
-	csrw sstatus,zero
-	# Enable software exceptions and disable all
-	# external and timer interrupts for non-zero harts 
-	li t2,0x06
-	csrw mie,t2
-	csrw sie,t2
-	# zero machine mode return address
-	csrw mepc,zero
+entry_spin:
+	# Spin forever, this is never reached since the call to 
+	# kernel_main never returns
+	j entry_spin
+
+upper_hart_sleep:
 	# Sleep until woken up by an interrupt from another core
 	wfi
-	j	non_zero_sleep
-
+	j upper_hart_sleep

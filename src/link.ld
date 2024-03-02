@@ -84,7 +84,9 @@ SECTIONS
 	# Let the kernel stack start at the end of the BSS section. 
 	# Because stack grows downwards, the end of the kernel stack 
 	# section needs to be calculated. Allocate 512 KB for the 
-	# kernel stack. 
+	# kernel stack. Each RISC-V hart will take one 4-KB page 
+	# to use as its kernel stack space. This allows for up 
+	# to 128 harts to be operating in parallel. 
 	PROVIDE(kernel_stack_start = bss_end);
 	PROVIDE(kernel_stack_end = kernel_stack_start + 0x80000);
 	# The kernel heap region is all the space above the stack and 

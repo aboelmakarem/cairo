@@ -7,7 +7,7 @@
 
 .section .text
 
-.global trap_location
+.global trap_vector
 
-trap_location:
+trap_vector:
 	add a0,a0,a1

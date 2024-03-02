@@ -250,8 +250,8 @@ static inline u64 get_time()
 }
 
 /// Memory paging
-typedef u64 pagetable_entry
-typedef u64* pagetable
+typedef u64 pagetable_entry;
+typedef u64* pagetable;
 
 /// Sv39 Memory Paging
 /// Sv39 Page Table Entry Masks
@@ -294,7 +294,7 @@ static inline void set_page_table_location(u64 location)
 	asm volatile("csrw satp, %0" : : "r" (location));
 }
 
-static inline flush_tlb()
+static inline void flush_tlb()
 {
 	asm volatile("sfence.vma zero, zero");
 }
