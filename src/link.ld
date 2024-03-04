@@ -17,6 +17,8 @@ SECTIONS
 	PROVIDE(memory_start = .);
 	# let kernel program memory size be 4 GB
 	PROVIDE(memory_length = 4294967296);
+	# define the page size
+	PROVIDE(page_size = 4096);
 	# Program code
 	.text : 
 	{
@@ -24,17 +26,17 @@ SECTIONS
 		# put the entry text first before anything else
 		*(.text.entry)
 		*(.text .text.*)
-		# align the trampoline code to a 4-KB page boundary
-		. = ALIGN(4096);
+		# align the trampoline code to a page boundary
+		. = ALIGN(page_size);
 		# define trampoline location in physical memory
 		PROVIDE(trampoline_start = .);
 		# put trampoline code
 		*(.trampoline_section)
 		# give trampoline code its own full page, whatever comes next should 
 		# start at the beginning of the next page
-		. = ALIGN(4096);
+		. = ALIGN(page_size);
 		# verify that trampoline code does not exceed one page
-		ASSERT(. - trampoline_start == 4096,"error: trampoline code is more than one page long");
+		ASSERT(. - trampoline_start == page_size,"error: trampoline code is more than one page long");
 		# define the end of text location
 		PROVIDE(text_end = .);
 	}
@@ -75,18 +77,18 @@ SECTIONS
 		*(.bss .bss.*)
 		PROVIDE(bss_end = .);
 	}
-
-	# Define the memory location where heap and stack can be 
+	# Align the following to a page boundary
+	. = ALIGN(page_size);
+	# Define the memory locations where heap and stack can be 
 	# allocated. These will be calculated based on the currently 
-	# set memory start location. Calculate the memory end location 
-	# from the previously defined memory called ram. 
+	# set memory start location. 
 	PROVIDE(memory_end = memory_start + memory_length);
 	# Let the kernel stack start at the end of the BSS section. 
 	# Because stack grows downwards, the end of the kernel stack 
 	# section needs to be calculated. Allocate 512 KB for the 
 	# kernel stack. Each RISC-V hart will take one 4-KB page 
 	# to use as its kernel stack space. This allows for up 
-	# to 128 harts to be operating in parallel. 
+	# to 128 harts to be operating in parallel.
 	PROVIDE(kernel_stack_start = bss_end);
 	PROVIDE(kernel_stack_end = kernel_stack_start + 0x80000);
 	# The kernel heap region is all the space above the stack and 

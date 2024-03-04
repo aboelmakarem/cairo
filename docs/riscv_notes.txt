@@ -161,7 +161,7 @@ xcounteren (mcounteren/scounteren): bits of this register indicate which counter
 
 mcounterinhibit: bits of this register indicate which counters (cycle, retired instructions, hpmcounter3 --> 31) are inhibited from incrementing and which counters are not. If a bit is set, its counter is inhibited and does not increment, otherwise, the counter increments normally.  
 
-mtime: holds the current time in clock ticks. The value in the register is increment every clock tick. It is a 64-bit register and once the value held reaches the maximum possible value, the next tick satregister contents are reset to zero and counting starts again. The value in mtime is treated as an unsigned integer.
+mtime: holds the current time in clock ticks. The value in the register is increment every clock tick. It is a 64-bit register and once the value held reaches the maximum possible value the  register contents are reset to zero and counting starts again. The value in mtime is treated as an unsigned integer.
 
 mtimecmp: holds a time value, in number of clock ticks, to compare against. The system will provide a timer interrupt every time the time in mtime becomes higher than that in mtimecmp. The interrupt remains active until mtimecmp becomes higher than mtime. Incrementing mtimecmp with the value of the time slice every time the hart gets a timer interrupt allows the hart to get interrupted every time slice. Timer interrupts are taken if mie.MTIE is set. 
 

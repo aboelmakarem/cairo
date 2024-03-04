@@ -299,17 +299,6 @@ static inline void flush_tlb()
 	asm volatile("sfence.vma zero, zero");
 }
 
-/// Physical Memory Protection
-static inline void set_pmp_configuration(u64 configuration)
-{
-	asm volatile("csrw pmpcfg0, %0" : : "r" (configuration));
-}
-
-static inline void set_pmp_address(u64 address)
-{
-	asm volatile("csrw pmpaddr0, %0" : : "r" (address));
-}
-
 /// Maximum virtual address for a process, including kernel 
 /// kernel process given an Sv39 paging scheme where every 
 /// virtual address is 39 bits. Sv39 requires that the upper 
