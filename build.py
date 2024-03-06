@@ -9,7 +9,8 @@ import pathlib
 # Define compilers, assemblers, linkers and flags
 assembler = "riscv64-elf-as"
 c_compiler = "riscv64-elf-gcc"
-c_flags = "-ffreestanding -nostdlib"
+# the mcmode=medany flag is required to avoid "relocation truncated to fit" error
+c_flags = "-ffreestanding -nostdlib -mcmodel=medany"
 linker = "riscv64-elf-ld"
 
 # Define locations of source files
